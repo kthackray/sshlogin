@@ -1,0 +1,86 @@
+#!/usr/bin/python                                                                                                                        
+import argparse
+from ConfigParser import ConfigParser
+import pexpect, struct, fcntl, termios, signal, sys
+from os.path import expanduser, join, exists
+import logging
+import logging.handlers
+
+format='[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s'
+
+logging.basicConfig(level=logging.INFO, format=format)
+logger = logging.getLogger(__name__)
+
+def main(args):
+    url = args.url
+    user, host = url.split('@', 1)
+
+    cfg_file = join(expanduser("~"), 'ssh.cfg')
+    if not exists(cfg_file):
+        logger.error('No ssh.cfg found in home directory')
+        raise SystemExit
+    cfg = ConfigParser()
+    cfg.read(cfg_file)
+    passwd = None
+    for name, value in cfg.items(user):
+        if name in host:
+            passwd = value
+            break
+    if passwd is None:
+        logger.error('No password configuration found in %s' % cfg_file)
+        raise SystemExit
+
+    global child
+    child = pexpect.spawn('ssh {0}'.format(url))
+    child.expect('password:')
+    child.sendline(passwd)
+    signal.signal(signal.SIGWINCH, sigwinch_passthrough)
+    sigwinch_passthrough_init()
+    child.interact()
+
+def getTerminalSize():
+    import os
+    env = os.environ
+    def ioctl_GWINSZ(fd):
+        try:
+            import fcntl, termios, struct, os
+            cr = struct.unpack('hh', fcntl.ioctl(fd, termios.TIOCGWINSZ, '1234'))
+        except:
+            return
+        return cr
+    cr = ioctl_GWINSZ(0) or ioctl_GWINSZ(1) or ioctl_GWINSZ(2)
+    if not cr:
+        try:
+            fd = os.open(os.ctermid(), os.O_RDONLY)
+            cr = ioctl_GWINSZ(fd)
+            os.close(fd)
+        except:
+            pass
+    if not cr:
+        cr = (env.get('LINES', 25), env.get('COLUMNS', 80))
+
+        ### Use get(key[, default]) instead of a try/catch
+        #try:
+        #    cr = (env['LINES'], env['COLUMNS'])
+        #except:
+        #    cr = (25, 80)
+    return int(cr[1]), int(cr[0])
+
+
+def sigwinch_passthrough (sig, data):
+    s = struct.pack("HHHH", 0, 0, 0, 0)
+    a = struct.unpack('hhhh', fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ , s))
+    global child
+    child.setwinsize(a[0],a[1])
+
+def sigwinch_passthrough_init ():
+    s = struct.pack("HHHH", 0, 0, 0, 0)
+    a = struct.unpack('hhhh', fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ , s))
+    global child
+    child.setwinsize(a[0],a[1])
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Run ssh through pexpect')
+    parser.add_argument('url')
+    args = parser.parse_args()
+    main(args)
