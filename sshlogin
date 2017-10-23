@@ -32,7 +32,7 @@ def main(args):
 
     global child
     child = pexpect.spawn('ssh {0}'.format(url))
-    child.expect('password:')
+    child.expect('(?i)password:')
     child.sendline(passwd)
     signal.signal(signal.SIGWINCH, sigwinch_passthrough)
     sigwinch_passthrough_init()
